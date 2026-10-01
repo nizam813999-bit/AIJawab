@@ -1,0 +1,945 @@
+name: Build AI Jawab APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      # ==========================================================
+      # Membuat project Android
+      # ==========================================================
+
+      - name: Create project
+        shell: bash
+        run: |
+
+          mkdir -p app/src/main/java/com/aijawab/app
+          mkdir -p app/src/main/res/values
+
+          mkdir -p .github/workflows
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "AIJawab"
+          include(":app")
+          EOF
+
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.6.1' apply false
+              id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
+          }
+          EOF
+
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF
+
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+
+          android {
+              namespace 'com.aijawab.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.aijawab.app'
+                  minSdk 26
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.core:core-ktx:1.15.0'
+              implementation 'androidx.appcompat:appcompat:1.7.0'
+              implementation 'com.google.android.material:material:1.12.0'
+
+              implementation 'com.google.mlkit:text-recognition:16.0.1'
+          }
+          EOF
+
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">AI Jawab</string>
+          </resources>
+          EOF
+
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <style name="AppTheme"
+                  parent="Theme.Material3.DayNight.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:statusBarColor">#080B16</item>
+                  <item name="android:navigationBarColor">#080B16</item>
+
+              </style>
+
+          </resources>
+          EOF
+
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+              <application
+                  android:allowBackup="true"
+                  android:label="AI Jawab"
+                  android:theme="@style/AppTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+
+                          <action android:name="android.intent.action.MAIN"/>
+
+                          <category android:name="android.intent.category.LAUNCHER"/>
+
+                      </intent-filter>
+
+                  </activity>
+
+                  <service
+                      android:name=".FloatingService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection"/>
+
+              </application>
+
+          </manifest>
+          EOF
+
+
+          cat > app/src/main/java/com/aijawab/app/MainActivity.kt <<'EOF'
+          package com.aijawab.app
+
+          import android.app.Activity
+          import android.content.Context
+          import android.content.Intent
+          import android.media.projection.MediaProjectionManager
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import android.widget.Toast
+
+          class MainActivity : Activity() {
+
+              companion object {
+                  private const val CAPTURE_REQUEST = 500
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val layout = LinearLayout(this)
+
+                  layout.orientation = LinearLayout.VERTICAL
+
+                  layout.gravity = Gravity.CENTER
+
+                  layout.setPadding(40, 40, 40, 40)
+
+                  val title = TextView(this)
+
+                  title.text = "✨ AI Jawab"
+
+                  title.textSize = 30f
+
+                  val description = TextView(this)
+
+                  description.text =
+                      "Tombol AI mengambang untuk membantu membaca soal."
+
+                  description.textSize = 16f
+
+                  description.setPadding(0, 20, 0, 30)
+
+                  val overlay = Button(this)
+
+                  overlay.text =
+                      "🔵 Aktifkan Tombol AI"
+
+                  overlay.setOnClickListener {
+
+                      if (!Settings.canDrawOverlays(this)) {
+
+                          val intent =
+                              Intent(
+                                  Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                  Uri.parse("package:$packageName")
+                              )
+
+                          startActivity(intent)
+
+                      } else {
+
+                          startFloatingService()
+
+                      }
+                  }
+
+                  val capture = Button(this)
+
+                  capture.text =
+                      "📸 Izinkan Screen Capture"
+
+                  capture.setOnClickListener {
+
+                      requestCapture()
+
+                  }
+
+                  layout.addView(title)
+
+                  layout.addView(description)
+
+                  layout.addView(overlay)
+
+                  layout.addView(capture)
+
+                  setContentView(layout)
+              }
+
+              private fun requestCapture() {
+
+                  val manager =
+                      getSystemService(
+                          Context.MEDIA_PROJECTION_SERVICE
+                      ) as MediaProjectionManager
+
+                  startActivityForResult(
+                      manager.createScreenCaptureIntent(),
+                      CAPTURE_REQUEST
+                  )
+              }
+
+              private fun startFloatingService() {
+
+                  val intent =
+                      Intent(
+                          this,
+                          FloatingService::class.java
+                      )
+
+                  if (android.os.Build.VERSION.SDK_INT >= 26) {
+
+                      startForegroundService(intent)
+
+                  } else {
+
+                      startService(intent)
+
+                  }
+              }
+
+              override fun onActivityResult(
+                  requestCode: Int,
+                  resultCode: Int,
+                  data: Intent?
+              ) {
+
+                  super.onActivityResult(
+                      requestCode,
+                      resultCode,
+                      data
+                  )
+
+                  if (
+                      requestCode == CAPTURE_REQUEST &&
+                      resultCode == RESULT_OK &&
+                      data != null
+                  ) {
+
+                      FloatingService.captureResultCode =
+                          resultCode
+
+                      FloatingService.captureData =
+                          data
+
+                      Toast.makeText(
+                          this,
+                          "Screen Capture aktif",
+                          Toast.LENGTH_SHORT
+                      ).show()
+
+                      startFloatingService()
+                  }
+              }
+          }
+          EOF
+
+
+          cat > app/src/main/java/com/aijawab/app/FloatingService.kt <<'EOF'
+          package com.aijawab.app
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.graphics.PixelFormat
+          import android.hardware.display.DisplayManager
+          import android.hardware.display.VirtualDisplay
+          import android.media.ImageReader
+          import android.media.projection.MediaProjection
+          import android.media.projection.MediaProjectionManager
+          import android.os.Build
+          import android.os.Handler
+          import android.os.IBinder
+          import android.os.Looper
+          import android.view.Gravity
+          import android.view.View
+          import android.view.WindowManager
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import android.widget.Toast
+          import com.google.mlkit.vision.common.InputImage
+          import com.google.mlkit.vision.text.TextRecognition
+          import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+
+          class FloatingService : Service() {
+
+              companion object {
+
+                  var captureResultCode: Int = 0
+
+                  var captureData: Intent? = null
+              }
+
+              private lateinit var windowManager: WindowManager
+
+              private var floatingButton: View? = null
+
+              private var projection: MediaProjection? = null
+
+              private var display: VirtualDisplay? = null
+
+              private var reader: ImageReader? = null
+
+              override fun onCreate() {
+
+                  super.onCreate()
+
+                  createChannel()
+
+                  startForeground(
+                      10,
+                      notification()
+                  )
+
+                  windowManager =
+                      getSystemService(
+                          WINDOW_SERVICE
+                      ) as WindowManager
+
+                  showFloatingButton()
+
+                  setupProjection()
+              }
+
+              private fun showFloatingButton() {
+
+                  val button =
+                      Button(this)
+
+                  button.text = "✨\nAI"
+
+                  button.textSize = 11f
+
+                  button.setTextColor(
+                      android.graphics.Color.WHITE
+                  )
+
+                  button.setBackgroundColor(
+                      android.graphics.Color.rgb(
+                          105,
+                          75,
+                          240
+                      )
+                  )
+
+                  button.setOnClickListener {
+
+                      showMenu()
+
+                  }
+
+                  val type =
+                      if (
+                          Build.VERSION.SDK_INT >=
+                          Build.VERSION_CODES.O
+                      )
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                      else
+                          WindowManager.LayoutParams.TYPE_PHONE
+
+                  val params =
+                      WindowManager.LayoutParams(
+                          150,
+                          150,
+                          type,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                          PixelFormat.TRANSLUCENT
+                      )
+
+                  params.gravity =
+                      Gravity.RIGHT or
+                      Gravity.CENTER_VERTICAL
+
+                  params.x = 20
+
+                  floatingButton = button
+
+                  windowManager.addView(
+                      button,
+                      params
+                  )
+              }
+
+              private fun showMenu() {
+
+                  val menu =
+                      LinearLayout(this)
+
+                  menu.orientation =
+                      LinearLayout.VERTICAL
+
+                  menu.setPadding(
+                      30,
+                      30,
+                      30,
+                      30
+                  )
+
+                  menu.setBackgroundColor(
+                      android.graphics.Color.rgb(
+                          17,
+                          24,
+                          43
+                      )
+                  )
+
+                  val title =
+                      TextView(this)
+
+                  title.text =
+                      "✨ AI Jawab"
+
+                  title.textSize = 22f
+
+                  title.setTextColor(
+                      android.graphics.Color.WHITE
+                  )
+
+                  val answer =
+                      Button(this)
+
+                  answer.text =
+                      "✨ Jawab Soal"
+
+                  val read =
+                      Button(this)
+
+                  read.text =
+                      "📖 Baca Teks"
+
+                  val close =
+                      Button(this)
+
+                  close.text =
+                      "Tutup"
+
+                  menu.addView(title)
+
+                  menu.addView(answer)
+
+                  menu.addView(read)
+
+                  menu.addView(close)
+
+                  val params =
+                      WindowManager.LayoutParams(
+                          700,
+                          WindowManager.LayoutParams.WRAP_CONTENT,
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                          PixelFormat.TRANSLUCENT
+                      )
+
+                  params.gravity =
+                      Gravity.CENTER
+
+                  windowManager.addView(
+                      menu,
+                      params
+                  )
+
+                  fun remove() {
+
+                      try {
+
+                          windowManager.removeView(
+                              menu
+                          )
+
+                      } catch (_: Exception) {
+                      }
+                  }
+
+                  answer.setOnClickListener {
+
+                      remove()
+
+                      captureScreen()
+
+                  }
+
+                  read.setOnClickListener {
+
+                      remove()
+
+                      captureScreen()
+
+                  }
+
+                  close.setOnClickListener {
+
+                      remove()
+
+                  }
+              }
+
+              private fun setupProjection() {
+
+                  val data =
+                      captureData
+                          ?: return
+
+                  val manager =
+                      getSystemService(
+                          Context.MEDIA_PROJECTION_SERVICE
+                      ) as MediaProjectionManager
+
+                  projection =
+                      manager.getMediaProjection(
+                          captureResultCode,
+                          data
+                      )
+              }
+
+              private fun captureScreen() {
+
+                  val mp =
+                      projection
+
+                  if (mp == null) {
+
+                      Toast.makeText(
+                          this,
+                          "Aktifkan Screen Capture terlebih dahulu.",
+                          Toast.LENGTH_LONG
+                      ).show()
+
+                      return
+                  }
+
+                  val metrics =
+                      resources.displayMetrics
+
+                  val width =
+                      metrics.widthPixels
+
+                  val height =
+                      metrics.heightPixels
+
+                  val density =
+                      metrics.densityDpi
+
+                  reader =
+                      ImageReader.newInstance(
+                          width,
+                          height,
+                          PixelFormat.RGBA_8888,
+                          2
+                      )
+
+                  display =
+                      mp.createVirtualDisplay(
+                          "AIJawab",
+                          width,
+                          height,
+                          density,
+                          DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                          reader!!.surface,
+                          null,
+                          null
+                      )
+
+                  reader!!.setOnImageAvailableListener(
+                      { imageReader ->
+
+                          val image =
+                              imageReader.acquireLatestImage()
+                                  ?: return@setOnImageAvailableListener
+
+                          val plane =
+                              image.planes[0]
+
+                          val buffer =
+                              plane.buffer
+
+                          val pixelStride =
+                              plane.pixelStride
+
+                          val rowStride =
+                              plane.rowStride
+
+                          val rowPadding =
+                              rowStride -
+                              pixelStride * width
+
+                          val bitmapWidth =
+                              width +
+                              rowPadding /
+                              pixelStride
+
+                          val bitmap =
+                              Bitmap.createBitmap(
+                                  bitmapWidth,
+                                  height,
+                                  Bitmap.Config.ARGB_8888
+                              )
+
+                          bitmap.copyPixelsFromBuffer(
+                              buffer
+                          )
+
+                          image.close()
+
+                          display?.release()
+
+                          runOCR(bitmap)
+
+                      },
+                      Handler(
+                          Looper.getMainLooper()
+                      )
+                  )
+              }
+
+              private fun runOCR(
+                  bitmap: Bitmap
+              ) {
+
+                  Toast.makeText(
+                      this,
+                      "🔎 Membaca soal...",
+                      Toast.LENGTH_SHORT
+                  ).show()
+
+                  val image =
+                      InputImage.fromBitmap(
+                          bitmap,
+                          0
+                      )
+
+                  val recognizer =
+                      TextRecognition.getClient(
+                          TextRecognizerOptions.DEFAULT_OPTIONS
+                      )
+
+                  recognizer.process(image)
+                      .addOnSuccessListener {
+
+                          showResult(
+                              it.text
+                          )
+
+                      }
+                      .addOnFailureListener {
+
+                          showResult(
+                              "OCR gagal membaca layar."
+                          )
+
+                      }
+              }
+
+              private fun showResult(
+                  text: String
+              ) {
+
+                  val box =
+                      LinearLayout(this)
+
+                  box.orientation =
+                      LinearLayout.VERTICAL
+
+                  box.setPadding(
+                      30,
+                      30,
+                      30,
+                      30
+                  )
+
+                  box.setBackgroundColor(
+                      android.graphics.Color.rgb(
+                          15,
+                          22,
+                          40
+                      )
+                  )
+
+                  val title =
+                      TextView(this)
+
+                  title.text =
+                      "✨ Hasil AI Jawab"
+
+                  title.textSize =
+                      22f
+
+                  title.setTextColor(
+                      android.graphics.Color.WHITE
+                  )
+
+                  val result =
+                      TextView(this)
+
+                  result.text =
+                      if (text.isBlank())
+                          "Tidak ada teks yang terbaca."
+                      else
+                          text
+
+                  result.textSize =
+                      16f
+
+                  result.setTextColor(
+                      android.graphics.Color.WHITE
+                  )
+
+                  result.setPadding(
+                      0,
+                      25,
+                      0,
+                      25
+                  )
+
+                  val close =
+                      Button(this)
+
+                  close.text =
+                      "Tutup"
+
+                  box.addView(title)
+
+                  box.addView(result)
+
+                  box.addView(close)
+
+                  val params =
+                      WindowManager.LayoutParams(
+                          850,
+                          WindowManager.LayoutParams.WRAP_CONTENT,
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                          PixelFormat.TRANSLUCENT
+                      )
+
+                  params.gravity =
+                      Gravity.CENTER
+
+                  windowManager.addView(
+                      box,
+                      params
+                  )
+
+                  close.setOnClickListener {
+
+                      try {
+
+                          windowManager.removeView(
+                              box
+                          )
+
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              private fun createChannel() {
+
+                  if (
+                      Build.VERSION.SDK_INT >=
+                      Build.VERSION_CODES.O
+                  ) {
+
+                      val channel =
+                          NotificationChannel(
+                              "AI_JAWAB",
+                              "AI Jawab",
+                              NotificationManager.IMPORTANCE_LOW
+                          )
+
+                      val manager =
+                          getSystemService(
+                              NotificationManager::class.java
+                          )
+
+                      manager.createNotificationChannel(
+                          channel
+                      )
+                  }
+              }
+
+              private fun notification():
+                      Notification {
+
+                  return if (
+                      Build.VERSION.SDK_INT >=
+                      Build.VERSION_CODES.O
+                  ) {
+
+                      Notification.Builder(
+                          this,
+                          "AI_JAWAB"
+                      )
+                          .setContentTitle(
+                              "AI Jawab aktif"
+                          )
+                          .setContentText(
+                              "Tombol AI sedang aktif"
+                          )
+                          .setSmallIcon(
+                              android.R.drawable.ic_menu_search
+                          )
+                          .build()
+
+                  } else {
+
+                      Notification.Builder(this)
+                          .setContentTitle(
+                              "AI Jawab aktif"
+                          )
+                          .setContentText(
+                              "Tombol AI sedang aktif"
+                          )
+                          .setSmallIcon(
+                              android.R.drawable.ic_menu_search
+                          )
+                          .build()
+                  }
+              }
+
+              override fun onBind(
+                  intent: Intent?
+              ): IBinder? = null
+
+              override fun onDestroy() {
+
+                  try {
+
+                      floatingButton?.let {
+                          windowManager.removeView(it)
+                      }
+
+                  } catch (_: Exception) {
+                  }
+
+                  display?.release()
+
+                  reader?.close()
+
+                  projection?.stop()
+
+                  super.onDestroy()
+              }
+          }
+          EOF
+
+
+      # ==========================================================
+      # Build APK
+      # ==========================================================
+
+      - name: Build Debug APK
+        run: gradle assembleDebug
+
+      # ==========================================================
+      # Upload APK agar bisa didownload
+      # ==========================================================
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIJawab-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
